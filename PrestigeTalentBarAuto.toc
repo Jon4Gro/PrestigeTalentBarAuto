@@ -1,0 +1,12 @@
+## Interface: 30300
+## Title: PrestigeTalentBarAuto
+## Notes: Automates action bars and talents for Prestige systems upon leveling up.
+## Author: You
+## SavedVariablesPerCharacter: PTBA_DB
+## Version: 1.0
+
+Core.lua
+Minimap.lua
+Bar.lua
+Talent.lua
+UI.lua
