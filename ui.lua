@@ -88,6 +88,16 @@ StaticPopupDialogs["PTBA_APPLY_BARS_CONFIRM"] = {
     timeout = 0, whileDead = 1, hideOnEscape = 1
 }
 
+StaticPopupDialogs["PTBA_CLEAR_QUEUE_CONFIRM"] = {
+    text = "|cFFFF0000WARNING:|r\nAre you sure you want to clear the entire talent queue for this profile?",
+    button1 = "Clear", button2 = "Cancel",
+    OnAccept = function()
+        PTBA.ClearTalentQueue()
+        PTBA.RefreshUI()
+    end,
+    timeout = 0, whileDead = 1, hideOnEscape = 1
+}
+
 -- ==========================================
 -- UI WIDGETS
 -- ==========================================
@@ -98,7 +108,6 @@ profileLabel:SetPoint("TOPLEFT", 16, -20)
 profileLabel:SetText("Selected Profile:")
 
 local profileDropdown = CreateFrame("Frame", "PTBA_ProfileDropdown", panel, "UIDropDownMenuTemplate")
--- The -15 X offset pulls the dropdown left to hide the invisible padding Blizzard adds to dropdown frames
 profileDropdown:SetPoint("LEFT", profileLabel, "RIGHT", -15, -3)
 
 local function ProfileDropdown_OnClick(self)
@@ -213,13 +222,18 @@ btnRecord:SetSize(90, 22)
 btnRecord:SetPoint("LEFT", talentTitle, "RIGHT", 15, 0)
 btnRecord:SetText("Start Rec")
 btnRecord:SetScript("OnClick", function(self)
-    PTBA_DB.isRecordingTalents = not PTBA_DB.isRecordingTalents
+    local newState = not PTBA_DB.isRecordingTalents
+    
+    if PTBA.SetRecording then
+        PTBA.SetRecording(newState)
+    else
+        PTBA_DB.isRecordingTalents = newState
+    end
+    
     if PTBA_DB.isRecordingTalents then
         self:SetText("Stop Rec")
-        print("|cFF00FF00PTBA:|r Talent Recording Started. Open Talent Tree and assign points.")
     else
         self:SetText("Start Rec")
-        print("|cFF00FF00PTBA:|r Talent Recording Stopped.")
     end
 end)
 
@@ -228,8 +242,7 @@ btnClearTalents:SetSize(90, 22)
 btnClearTalents:SetPoint("LEFT", btnRecord, "RIGHT", 5, 0)
 btnClearTalents:SetText("Clear Queue")
 btnClearTalents:SetScript("OnClick", function()
-    PTBA.ClearTalentQueue()
-    PTBA.RefreshUI()
+    StaticPopup_Show("PTBA_CLEAR_QUEUE_CONFIRM")
 end)
 
 -- Multiline Scrollable Talent Queue Field
@@ -266,11 +279,11 @@ scrollFrame:SetScrollChild(csvInput)
 local btnSaveCSV = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 btnSaveCSV:SetSize(120, 22)
 btnSaveCSV:SetPoint("TOPLEFT", scrollFrame, "BOTTOMLEFT", -5, -10)
-btnSaveCSV:SetText("Save Queue Text")
+btnSaveCSV:SetText("Apply Text Edits")
 btnSaveCSV:SetScript("OnClick", function()
     csvInput:ClearFocus()
     PTBA.LoadTalentsFromCSV(csvInput:GetText())
-    print("|cFF00FF00PTBA:|r Talent Queue loaded from text.")
+    print("|cFF00FF00PTBA:|r Talent Queue successfully updated from text box.")
 end)
 
 -- ==========================================

@@ -1,20 +1,15 @@
 -- Talent.lua: Handles recording talent sequences, CSV parsing, and auto-learning
 
--- Setup the Respec Prompt Window
 StaticPopupDialogs["PTBA_RESPEC_PROMPT"] = {
     text = "|cFF00FF00PrestigeTalentBarAuto:|r\nYour current talents do not match the saved Profile Queue.\nYou need a Respec to continue the auto-queue.\n\nExecute reset command?",
     button1 = "Yes (Reset)",
     button2 = "Ignore",
     OnAccept = function()
-        -- Safely simulate typing the command into the chat box to support server emulator commands (.respec, etc)
         local editBox = ChatEdit_ChooseBoxForSend()
         editBox:SetText(PTBA_DB.customResetCommand)
         ChatEdit_SendText(editBox)
     end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3, -- Prevents UI taint with other addons
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
 -- ==========================================
@@ -42,7 +37,15 @@ function PTBA.LoadTalentsFromCSV(csvString)
         local tab, index = string.match(pair, "^(%d+):(%d+)$")
         
         if tab and index then
-            table.insert(newTalents, { tab = tonumber(tab), index = tonumber(index) })
+            local t, i = tonumber(tab), tonumber(index)
+            local name = GetTalentInfo(t, i) or "Unknown"
+            
+            -- WotLK API Fix: Catches both |Htalent:ID|h and |Hspell:ID|h
+            local link = GetTalentLink(t, i)
+            local spellID = 0
+            if link then spellID = tonumber(link:match("|H%a+:(%d+)")) or 0 end
+            
+            table.insert(newTalents, { tab = t, index = i, spellID = spellID, name = name })
         end
     end
     
@@ -51,36 +54,84 @@ function PTBA.LoadTalentsFromCSV(csvString)
 end
 
 -- ==========================================
--- RECORDING MODE
+-- RECORDING MODE (With Shadow Tracking to prevent Over-Clicking)
 -- ==========================================
+
+local shadowRanks = {}
+
+local function InitShadowRanks()
+    shadowRanks = {}
+    for t = 1, 3 do
+        shadowRanks[t] = {}
+        for idx = 1, GetNumTalents(t) do
+            local _, _, _, _, currRank = GetTalentInfo(t, idx)
+            shadowRanks[t][idx] = currRank
+        end
+    end
+    ResetGroupPreviewTalentPoints()
+end
+
+function PTBA.SetRecording(state)
+    PTBA_DB.isRecordingTalents = state
+    if state then
+        InitShadowRanks()
+        print("|cFF00FF00PTBA:|r Talent Recording Started. Open Talent Tree and assign points.")
+    else
+        print("|cFF00FF00PTBA:|r Talent Recording Stopped.")
+    end
+end
 
 function PTBA.RecordTalent(tab, index, points)
     local profile = PTBA.GetActiveProfileData()
     if not profile then return end
     
-    local name = GetTalentInfo(tab, index)
+    -- Ensure shadowRanks exists if UI was reloaded mid-recording
+    if not shadowRanks[1] then InitShadowRanks() end
+
+    local name, _, _, _, currRank, maxRank = GetTalentInfo(tab, index)
     if not name then name = "Unknown Talent" end
     
+    -- WotLK API Fix: Catch the ID dynamically regardless of hyperlink type
+    local link = GetTalentLink(tab, index)
+    local spellID = 0
+    if link then spellID = tonumber(link:match("|H%a+:(%d+)")) or 0 end
+    
+    local currentShadow = shadowRanks[tab][index] or 0
+
     if points > 0 then
-        for i = 1, points do
-            table.insert(profile.talents, { tab = tab, index = index })
+        -- Math prevents you from clicking more times than the maxRank allows
+        local spaceLeft = maxRank - currentShadow
+        local toAdd = math.min(points, spaceLeft)
+        
+        if toAdd <= 0 then return end -- Overclick blocked
+        
+        for i = 1, toAdd do
+            shadowRanks[tab][index] = shadowRanks[tab][index] + 1
+            table.insert(profile.talents, { tab = tab, index = index, spellID = spellID, name = name })
         end
-        print(string.format("|cFF00FF00PTBA:|r Recorded: |cFFFFFF00%s|r (Tab: %d, Index: %d)", name, tab, index))
+        print(string.format("|cFF00FF00PTBA:|r Recorded: |cFFFFFF00%s|r (ID: %d)", name, spellID))
+        
     elseif points < 0 then
+        -- Math prevents you from removing more points than you've added in this session
         local toRemove = math.abs(points)
-        for i = #profile.talents, 1, -1 do
-            if profile.talents[i].tab == tab and profile.talents[i].index == index then
-                table.remove(profile.talents, i)
-                toRemove = toRemove - 1
-                if toRemove == 0 then break end
+        local addedInPreview = currentShadow - currRank
+        toRemove = math.min(toRemove, addedInPreview)
+        
+        if toRemove <= 0 then return end
+        
+        for i = 1, toRemove do
+            shadowRanks[tab][index] = shadowRanks[tab][index] - 1
+            for j = #profile.talents, 1, -1 do
+                if profile.talents[j].tab == tab and profile.talents[j].index == index then
+                    table.remove(profile.talents, j)
+                    break
+                end
             end
         end
-        print(string.format("|cFFFF0000PTBA:|r Removed: |cFFFFFF00%s|r (Tab: %d, Index: %d)", name, tab, index))
+        print(string.format("|cFFFF0000PTBA:|r Removed: |cFFFFFF00%s|r", name))
     end
     
     PTBA.UpdateTalentCSV()
-    
-    -- If the user happens to have the UI open while clicking, refresh it live
     if PTBA_OptionsPanel and PTBA_OptionsPanel:IsVisible() and PTBA.RefreshUI then
         PTBA.RefreshUI()
     end
@@ -101,6 +152,7 @@ function PTBA.ClearTalentQueue()
     if profile then
         profile.talents = {}
         profile.talentCSV = ""
+        if PTBA_DB.isRecordingTalents then InitShadowRanks() end
         print("|cFF00FF00PTBA:|r Talent queue cleared for profile: " .. PTBA_DB.activeProfile)
     end
 end
@@ -142,6 +194,14 @@ function PTBA.CheckAndApplyTalents(currentLevel)
         local step = profile.talents[indexInQueue]
         local t = step.tab
         local idx = step.index
+        
+        -- Validation Check: Ensures server hasn't changed the talent layout
+        local currentName = GetTalentInfo(t, idx)
+        if step.name and step.name ~= "Unknown" and currentName ~= step.name then
+            print(string.format("|cFFFF0000PTBA Error:|r Talent mismatch! Expected '%s', found '%s'. Resetting to protect build.", step.name, currentName or "Nil"))
+            mismatch = true
+            break
+        end
         
         if current[t][idx] > 0 then
             current[t][idx] = current[t][idx] - 1
